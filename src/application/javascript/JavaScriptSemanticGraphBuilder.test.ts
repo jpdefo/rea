@@ -25,6 +25,60 @@ import { semanticCoverageResourceLimits } from "../../domain/javascript/javascri
 
 const SHA256 = "a".repeat(64);
 
+it.each([
+  ["plain export", "const answer = 42; export { answer };", "export", 0],
+  [
+    "aliased export",
+    "const answer = 42; export { answer as result };",
+    "export",
+    0,
+  ],
+  ["declaration", "const answer = 42;", null, 0],
+  ["assignment", "let answer = 0; answer = 1;", "write", 1],
+])("preserves write provenance for %s", (_name, source, role, writeCount) => {
+  const graph = graphFor(source);
+  const binding = graph.nodes.find(
+    ({ kind, label }) => kind === "binding" && label === "answer",
+  );
+  if (binding === undefined) throw new Error("Expected answer binding");
+  expect(
+    graph.relations.filter(
+      ({ relation, target_node_id }) =>
+        relation === "defines" && target_node_id === binding.node_id,
+    ),
+  ).toHaveLength(2);
+  const writes = graph.relations.filter(
+    ({ relation }) => relation === "writes",
+  );
+  expect(writes).toHaveLength(writeCount);
+  if (role !== null) {
+    const reference = graph.nodes.find(
+      ({ identity }) => identity.role_key === `reference:0:${role}:answer`,
+    );
+    expect(reference).toBeDefined();
+    if (role === "write")
+      expect(writes[0]).toMatchObject({
+        source_node_id: reference?.node_id,
+        target_node_id: binding.node_id,
+        resolution: "resolved",
+      });
+  }
+  const trace = queryJavaScriptSemanticGraph(graph, {
+    seed: { kind: "semantic-node", node_id: binding.node_id },
+    direction: "backward-provenance",
+    allowed_relations: ["writes"],
+  });
+  expect(trace).toMatchObject({
+    status: "found",
+    summary: {
+      total_seed_matches: 1,
+      traversed_nodes: 1 + writeCount,
+      traversed_relations: writeCount,
+    },
+  });
+  expect(trace.relations).toHaveLength(writeCount);
+});
+
 it("projects closure and direct interprocedural flow without execution", () => {
   const graph = graphFor(`
       const outer = 2;
