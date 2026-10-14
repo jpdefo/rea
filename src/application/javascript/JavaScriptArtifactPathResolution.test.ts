@@ -67,6 +67,89 @@ describe("artifact-local graph identity", () => {
   });
 });
 
+describe("relative ESM URL text preprocessing", () => {
+  it("resolves relative ESM control characters using URL text semantics", () => {
+    const source =
+      'import "./tab\\tname.js";\nimport "./nl\\nname.js";\nimport "./cr\\rname.js";\nimport "./tabname.js";';
+    const files = fileMap([
+      file("app/entry.mjs", "root", source),
+      file("app/tabname.js", "root"),
+      file("app/nlname.js", "root"),
+      file("app/crname.js", "root"),
+    ]);
+    const references = analyzeJavaScriptStaticSource(source).references.filter(
+      (reference) => reference.kind === "static-import",
+    );
+    expect(references.map((reference) => reference.specifier)).toEqual([
+      "./tab\tname.js",
+      "./nl\nname.js",
+      "./cr\rname.js",
+      "./tabname.js",
+    ]);
+    for (const [index, reference] of references.entries()) {
+      expect(
+        resolve({
+          declaredPath: reference.specifier ?? "",
+          sourcePath: "app/entry.mjs",
+          context: "module-specifier",
+          moduleKind: "import",
+          files,
+        }),
+      ).toMatchObject({
+        declared_path: reference.specifier,
+        resolution_status: "resolved",
+        resolved_path: [
+          "app/tabname.js",
+          "app/nlname.js",
+          "app/crname.js",
+          "app/tabname.js",
+        ][index],
+      });
+    }
+  });
+
+  it("keeps percent-decoded ESM and CommonJS control characters literal", () => {
+    const files = fileMap([
+      file("app/entry.mjs", "root"),
+      file("app/literal\tname.js", "root"),
+      file("app/literalname.js", "root"),
+    ]);
+    for (const [declaredPath, moduleKind] of [
+      ["./literal%09name.js", "import"],
+      ["./literal\tname.js", "require"],
+    ] as const) {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/entry.mjs",
+          context: "module-specifier",
+          moduleKind,
+          files,
+        }),
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_status: "resolved",
+        resolved_path: "app/literal\tname.js",
+      });
+    }
+  });
+
+  it.each(["./literal%2\tfname.js", "./literal%5\ncname.js"])(
+    "rejects encoded separators after URL text preprocessing: %j",
+    (declaredPath) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/entry.mjs",
+          context: "module-specifier",
+          moduleKind: "import",
+          files: fileMap([file("app/entry.mjs", "root")]),
+        }),
+      ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+    },
+  );
+});
+
 describe("loader-owned path lookup", () => {
   it("keeps relative ESM imports exact", () => {
     const files = fileMap([

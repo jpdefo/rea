@@ -499,6 +499,14 @@ const contextualCandidate = (
   }
   const hasUrlPathSemantics =
     context === "module-specifier" && input.moduleKind === "import";
+  // Classify the original request before URL preprocessing so package keys
+  // stay literal. Remove URL text controls before validating encoded bytes,
+  // never after decoding them into literal filename characters.
+  if (
+    hasUrlPathSemantics &&
+    (isRelativeJavaScriptModuleSpecifier(declared) || declared.startsWith("/"))
+  )
+    declared = declared.replace(/[\t\n\r]/gu, "");
   const rejected = rejectDeclaration(
     declared,
     declaresLiteralPercent(input) || hasUrlPathSemantics,
